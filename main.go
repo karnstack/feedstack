@@ -268,6 +268,11 @@ func newSource(line string) source {
 	return fileSource{path: line}
 }
 
+type fetchResult struct {
+	items []feedItem
+	err   error
+}
+
 func main() {
 	defer fmt.Println(appName, "shutting down")
 
@@ -290,15 +295,24 @@ func main() {
 		srcs = append(srcs, loggingSource{source: newSource(line)})
 	}
 
-	var fetched []feedItem
+	results := make(chan fetchResult)
+
 	for _, src := range srcs {
-		batch, err := src.fetch()
-		if err != nil {
-			fmt.Println(appName, "source failed:", err)
+		go func() {
+			batch, err := src.fetch()
+			results <- fetchResult{items: batch, err: err}
+		}()
+	}
+
+	var fetched []feedItem
+	for range srcs {
+		res := <-results
+		if res.err != nil {
+			fmt.Println(appName, "source failed:", res.err)
 			failed++
 			continue
 		}
-		fetched = append(fetched, batch...)
+		fetched = append(fetched, res.items...)
 	}
 
 	items := slices.Collect(dedupedBy(fetched, func(it feedItem) string {
