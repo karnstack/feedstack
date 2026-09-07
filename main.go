@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -17,14 +18,26 @@ const (
 	statusFailed
 )
 
-func newFetcher() func() (string, bool) {
-	seen := 0
-	return func() (string, bool) {
-		seen++
-		if seen%5 == 0 {
-			return "", false // simulated duplicate: skip it
+type feedItem struct {
+	title     string
+	link      string
+	source    string
+	published time.Time
+}
+
+func newFetcher() func() feedItem {
+	n := 0
+	return func() feedItem {
+		n++
+		id := n
+		if n%5 == 0 {
+			id = n - 1 // the feed re-serves the previous item
 		}
-		return fmt.Sprintf("\t item %d from café corner \n", seen), true
+		return feedItem{
+			title:  fmt.Sprintf("\t item %d from café corner \n", id),
+			link:   fmt.Sprintf("https://cafecorner.example/items/%d", id),
+			source: "café corner",
+		}
 	}
 }
 
@@ -36,24 +49,30 @@ func main() {
 	defer fmt.Println(appName, "shutting down")
 
 	status := statusFetching
-	titles := make([]string, 0, maxItems)
+	items := make([]feedItem, 0, maxItems)
+	seen := make(map[string]bool)
 
 	fetchNext := newFetcher()
-	for len(titles) < maxItems {
-		title, ok := fetchNext()
-		if !ok {
+	for len(items) < maxItems {
+		item := fetchNext()
+		if seen[item.link] {
 			continue
 		}
-		titles = append(titles, cleanTitle(title))
+		seen[item.link] = true
+		item.title = cleanTitle(item.title)
+		items = append(items, item)
 	}
 	status = statusDone
 
 	switch status {
 	case statusDone:
-		fmt.Printf("%s done: %d items fetched\n", appName, len(titles))
-		fmt.Printf("latest: %q\n", titles[len(titles)-3:])
+		fmt.Printf("%s done: %d items fetched\n", appName, len(items))
+		fmt.Println("latest:")
+		for _, item := range items[len(items)-3:] {
+			fmt.Printf("  %q -> %s\n", item.title, item.link)
+		}
 	case statusFailed:
-		fmt.Printf("%s failed after %d items\n", appName, len(titles))
+		fmt.Printf("%s failed after %d items\n", appName, len(items))
 	default:
 		fmt.Println(appName, "stopped in an unexpected state")
 	}
