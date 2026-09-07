@@ -18,6 +18,12 @@ func (s *store) snapshot() []feed.Item {
 	return s.items
 }
 
+func (s *store) len() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.items)
+}
+
 func (s *store) add(fresh []feed.Item) {
 	if len(fresh) == 0 {
 		return

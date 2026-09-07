@@ -40,7 +40,7 @@ func TestAggregate(t *testing.T) {
 		stubSource{err: errors.New("connection dropped")},
 	}
 
-	got, errs := Aggregate(context.Background(), srcs, NewSeenSet())
+	got, errs := Aggregate(context.Background(), srcs, NewSeenSet(), Options{})
 
 	want := []feed.Item{
 		{Title: "first post", Link: "https://a.example/1", Source: "stub feed", Published: first.Published},

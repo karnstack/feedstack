@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"os/signal"
@@ -103,13 +104,15 @@ func main() {
 	}
 	fmt.Println(appName, "sources:", lines)
 
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
 	srcs := make([]fetch.Source, 0, len(lines))
 	for _, line := range lines {
-		srcs = append(srcs, fetch.WithLogging(fetch.New(line)))
+		srcs = append(srcs, fetch.WithLogging(fetch.New(line), logger))
 	}
 
 	seen := fetch.NewSeenSet()
-	items, errs := fetch.Aggregate(ctx, srcs, seen)
+	items, errs := fetch.Aggregate(ctx, srcs, seen, fetch.Options{})
 
 	report(items, errs, len(srcs))
 

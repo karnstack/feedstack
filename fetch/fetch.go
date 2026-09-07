@@ -3,6 +3,7 @@ package fetch
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"slices"
@@ -70,23 +71,27 @@ func New(line string) Source {
 	return fileSource{path: line}
 }
 
+func WithLogging(src Source, log *slog.Logger) Source {
+	return loggingSource{
+		Source: src,
+		log:    log.With("source", fmt.Sprintf("%T", src)),
+	}
+}
+
 type loggingSource struct {
 	Source
+	log *slog.Logger
 }
 
 func (l loggingSource) Fetch(ctx context.Context) ([]feed.Item, error) {
 	start := time.Now()
 	items, err := l.Source.Fetch(ctx)
 	if err != nil {
-		fmt.Printf("%T: failed after %v: %v\n", l.Source, time.Since(start), err)
+		l.log.Error("fetch failed", "err", err, "elapsed", time.Since(start))
 		return nil, err
 	}
-	fmt.Printf("%T: %d items in %v\n", l.Source, len(items), time.Since(start))
+	l.log.Info("fetched", "items", len(items), "elapsed", time.Since(start))
 	return items, nil
-}
-
-func WithLogging(src Source) Source {
-	return loggingSource{Source: src}
 }
 
 type SeenSet struct {
@@ -113,6 +118,11 @@ type fetchResult struct {
 	err   error
 }
 
+type Options struct {
+	Workers int           // 0 means the default, 4
+	Timeout time.Duration // 0 means the default, 5 seconds
+}
+
 const (
 	maxWorkers   = 4
 	fetchTimeout = 5 * time.Second
@@ -127,7 +137,14 @@ func safeFetch(ctx context.Context, src Source) (items []feed.Item, err error) {
 	return src.Fetch(ctx)
 }
 
-func Aggregate(ctx context.Context, srcs []Source, seen *SeenSet) ([]feed.Item, []error) {
+func Aggregate(ctx context.Context, srcs []Source, seen *SeenSet, opts Options) ([]feed.Item, []error) {
+	if opts.Workers == 0 {
+		opts.Workers = maxWorkers
+	}
+	if opts.Timeout == 0 {
+		opts.Timeout = fetchTimeout
+	}
+
 	jobs := make(chan Source, len(srcs))
 	for _, src := range srcs {
 		jobs <- src
@@ -136,12 +153,12 @@ func Aggregate(ctx context.Context, srcs []Source, seen *SeenSet) ([]feed.Item, 
 
 	results := make(chan fetchResult)
 
-	workers := min(maxWorkers, len(srcs))
+	workers := min(opts.Workers, len(srcs))
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Go(func() {
 			for src := range jobs {
-				fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
+				fetchCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 				batch, err := safeFetch(fetchCtx, src)
 				cancel()
 

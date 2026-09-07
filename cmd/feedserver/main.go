@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,47 +14,62 @@ import (
 	"feedstack/internal/config"
 )
 
-const (
-	addr            = ":8080"
-	refreshEvery    = 15 * time.Minute
-	shutdownTimeout = 10 * time.Second
-)
+func newLogger(format string) *slog.Logger {
+	switch format {
+	case "json":
+		return slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	default:
+		return slog.New(slog.NewTextHandler(os.Stderr, nil))
+	}
+}
 
 func main() {
 	defer fmt.Println("feedserver: goodbye")
 
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "feedserver: cannot start:", err)
+		os.Exit(1)
+	}
+
+	logger := newLogger(cfg.logFormat)
+	slog.SetDefault(logger)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	lines, err := config.Load("feeds.txt")
+	lines, err := config.Load(cfg.feedsPath)
 	if err != nil {
-		fmt.Println("feedserver cannot start:", err)
-		return
-	}
-	if len(lines) == 0 {
-		fmt.Println("feedserver cannot start: no sources in feeds.txt")
-		return
+		logger.Error("cannot start", "err", err)
+		os.Exit(1)
 	}
 
-	srcs := make([]fetch.Source, 0, len(lines))
+	var srcs []fetch.Source
 	for _, line := range lines {
-		srcs = append(srcs, fetch.WithLogging(fetch.New(line)))
+		srcs = append(srcs, fetch.WithLogging(fetch.New(line), logger))
 	}
 
 	seen := fetch.NewSeenSet()
 	st := &store{}
+	m := &metrics{}
 
 	refresh := func() {
-		items, errs := fetch.Aggregate(ctx, srcs, seen)
-		for _, err := range errs {
-			fmt.Println("refresh:", err)
-		}
+		items, errs := fetch.Aggregate(ctx, srcs, seen, fetch.Options{
+			Workers: cfg.workers,
+			Timeout: cfg.fetchTimeout,
+		})
 		st.add(items)
+		m.refreshes.Add(1)
+		m.itemsAdded.Add(int64(len(items)))
+		m.fetchErrors.Add(int64(len(errs)))
+		m.lastRefresh.Store(time.Now().Unix())
+		logger.Info("refresh complete",
+			"new_items", len(items), "errors", len(errs), "store", st.len())
 	}
-	refresh()
+	refresh() // warm start
 
 	go func() {
-		ticker := time.NewTicker(refreshEvery)
+		ticker := time.NewTicker(cfg.refresh)
 		defer ticker.Stop()
 		for {
 			select {
@@ -65,11 +81,10 @@ func main() {
 		}
 	}()
 
-	mux := newMux(st)
-
+	handler := logRequests(logger, m, newMux(st, m))
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
+		Addr:              cfg.addr,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -77,18 +92,18 @@ func main() {
 	}
 
 	go func() {
-		fmt.Println("feedserver listening on", addr)
+		logger.Info("listening", "addr", cfg.addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			fmt.Println("server:", err)
-			stop() // exit through the same drain as ctrl-C
+			logger.Error("listen failed", "err", err)
+			stop()
 		}
 	}()
 
 	<-ctx.Done()
 
-	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutCtx); err != nil {
-		fmt.Println("shutdown:", err)
+		logger.Error("shutdown", "err", err)
 	}
 }

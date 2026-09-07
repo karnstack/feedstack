@@ -187,7 +187,7 @@ func TestHandleFeed(t *testing.T) {
 
 func TestRouting(t *testing.T) {
 	st := testStore(t)
-	mux := newMux(st)
+	mux := newMux(st, &metrics{})
 
 	tests := []struct {
 		name       string
@@ -202,6 +202,7 @@ func TestRouting(t *testing.T) {
 		{"wildcard matches a source", http.MethodGet, "/feeds/morning%20brew", http.StatusOK},
 		{"unknown source is a 404", http.MethodGet, "/feeds/the%20daily%20void", http.StatusNotFound},
 		{"bad limit is refused", http.MethodGet, "/items?limit=banana", http.StatusBadRequest},
+		{"metrics answers", http.MethodGet, "/metrics", http.StatusOK},
 	}
 
 	for _, tt := range tests {

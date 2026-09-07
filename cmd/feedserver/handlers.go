@@ -3,18 +3,46 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"sync/atomic"
+	"time"
 
 	"feedstack/feed"
 )
 
-func newMux(st *store) *http.ServeMux {
+func newMux(st *store, m *metrics) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", st.handleHealthz)
 	mux.HandleFunc("GET /items", st.handleItems)
 	mux.HandleFunc("GET /feeds/{source}", st.handleFeed)
+	mux.HandleFunc("GET /metrics", m.handleMetrics)
 	return mux
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.code = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func logRequests(log *slog.Logger, m *metrics, next http.Handler) http.Handler {
+	var nextID atomic.Int64
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, code: http.StatusOK}
+		reqLog := log.With("request_id", nextID.Add(1), "method", r.Method, "path", r.URL.Path)
+
+		next.ServeHTTP(rec, r)
+
+		m.requests.Add(1)
+		reqLog.Info("request", "status", rec.code, "elapsed", time.Since(start))
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

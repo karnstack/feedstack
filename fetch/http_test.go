@@ -60,7 +60,7 @@ func TestAggregateOverHTTP(t *testing.T) {
 	defer broken.Close()
 
 	srcs := []Source{New(healthy.URL), New(broken.URL)}
-	items, errs := Aggregate(t.Context(), srcs, NewSeenSet())
+	items, errs := Aggregate(t.Context(), srcs, NewSeenSet(), Options{})
 
 	if len(items) != 2 {
 		t.Errorf("items = %d, want 2", len(items))
