@@ -1,4 +1,4 @@
-package main
+package feed
 
 import (
 	"strings"
@@ -23,10 +23,10 @@ func TestCleanTitle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			item := feedItem{title: tt.in}
+			item := Item{Title: tt.in}
 			item.clean()
-			if item.title != tt.want {
-				t.Errorf("clean(%q) = %q, want %q", tt.in, item.title, tt.want)
+			if item.Title != tt.want {
+				t.Errorf("clean(%q) = %q, want %q", tt.in, item.Title, tt.want)
 			}
 		})
 	}
@@ -38,9 +38,9 @@ func FuzzCleanTitle(f *testing.F) {
 	f.Add(strings.Repeat("a", 100))
 
 	f.Fuzz(func(t *testing.T, title string) {
-		item := feedItem{title: title}
+		item := Item{Title: title}
 		item.clean()
-		got := item.title
+		got := item.Title
 
 		if len(got) > len(title) {
 			t.Errorf("clean(%q) grew the title: %d bytes in, %d bytes out", title, len(title), len(got))

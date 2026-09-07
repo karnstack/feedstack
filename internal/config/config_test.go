@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"errors"
@@ -10,14 +10,14 @@ import (
 func TestParseFeeds(t *testing.T) {
 	input := "# feedstack sources\n\nhttps://www.jsonfeed.org/feed.json\n  local.json  \n"
 
-	got, err := parseFeeds(strings.NewReader(input))
+	got, err := parse(strings.NewReader(input))
 	if err != nil {
-		t.Fatalf("parseFeeds() returned error: %v", err)
+		t.Fatalf("parse() returned error: %v", err)
 	}
 
 	want := []string{"https://www.jsonfeed.org/feed.json", "local.json"}
 	if !slices.Equal(got, want) {
-		t.Errorf("parseFeeds() = %q, want %q", got, want)
+		t.Errorf("parse() = %q, want %q", got, want)
 	}
 }
 
@@ -28,8 +28,8 @@ func (failingReader) Read([]byte) (int, error) {
 }
 
 func TestParseFeedsReadError(t *testing.T) {
-	_, err := parseFeeds(failingReader{})
+	_, err := parse(failingReader{})
 	if err == nil {
-		t.Fatal("parseFeeds() returned nil error for a failing reader, want non-nil")
+		t.Fatal("parse() returned nil error for a failing reader, want non-nil")
 	}
 }

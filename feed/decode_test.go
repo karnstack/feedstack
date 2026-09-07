@@ -1,4 +1,4 @@
-package main
+package feed
 
 import (
 	"bytes"
@@ -65,7 +65,7 @@ func TestDecodeLegacy(t *testing.T) {
 
 			var got []string
 			for _, item := range items {
-				got = append(got, item.title)
+				got = append(got, item.Title)
 			}
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("decodeLegacy() titles = %q, want %q", got, tt.want)
@@ -82,6 +82,6 @@ func FuzzDecodeItems(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// The property is survival: no input may panic the parser.
 		// An error return is a correct answer; rejecting garbage is the job.
-		_, _ = decodeItems(bytes.NewReader(data))
+		_, _ = Decode(bytes.NewReader(data))
 	})
 }
