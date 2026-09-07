@@ -12,10 +12,10 @@ const maxTitleLen = 80
 
 // Item is one feed entry in feedstack's own vocabulary.
 type Item struct {
-	Title     string
-	Link      string
-	Source    string
-	Published time.Time
+	Title     string    `json:"title"`
+	Link      string    `json:"link"`
+	Source    string    `json:"source"`
+	Published time.Time `json:"published"`
 }
 
 func (it *Item) clean() {
