@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 )
 
 const (
@@ -33,34 +32,28 @@ func cleanTitle(raw string) string {
 	return strings.TrimSpace(raw)
 }
 
-func recordKeep(fetched *int, last *string, title string) {
-	*fetched++
-	*last = title
-}
-
 func main() {
 	defer fmt.Println(appName, "shutting down")
 
 	status := statusFetching
-	var itemsFetched int
-	var lastTitle string
+	titles := make([]string, 0, maxItems)
 
 	fetchNext := newFetcher()
-	for itemsFetched < maxItems {
+	for len(titles) < maxItems {
 		title, ok := fetchNext()
 		if !ok {
 			continue
 		}
-		recordKeep(&itemsFetched, &lastTitle, cleanTitle(title))
+		titles = append(titles, cleanTitle(title))
 	}
 	status = statusDone
 
 	switch status {
 	case statusDone:
-		fmt.Printf("%s done: %d items fetched, last title %q\n", appName, itemsFetched, lastTitle)
-		fmt.Printf("that title is %d bytes, %d runes\n", len(lastTitle), utf8.RuneCountInString(lastTitle))
+		fmt.Printf("%s done: %d items fetched\n", appName, len(titles))
+		fmt.Printf("latest: %q\n", titles[len(titles)-3:])
 	case statusFailed:
-		fmt.Printf("%s failed after %d items\n", appName, itemsFetched)
+		fmt.Printf("%s failed after %d items\n", appName, len(titles))
 	default:
 		fmt.Println(appName, "stopped in an unexpected state")
 	}
