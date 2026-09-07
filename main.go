@@ -13,12 +13,14 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	appName  = "feedstack"
-	maxItems = 50
+	appName    = "feedstack"
+	maxItems   = 50
+	maxWorkers = 4
 )
 
 type status int
@@ -295,18 +297,32 @@ func main() {
 		srcs = append(srcs, loggingSource{source: newSource(line)})
 	}
 
+	jobs := make(chan source, len(srcs))
+	for _, src := range srcs {
+		jobs <- src
+	}
+	close(jobs)
+
 	results := make(chan fetchResult)
 
-	for _, src := range srcs {
-		go func() {
-			batch, err := src.fetch()
-			results <- fetchResult{items: batch, err: err}
-		}()
+	workers := min(maxWorkers, len(srcs))
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			for src := range jobs {
+				batch, err := src.fetch()
+				results <- fetchResult{items: batch, err: err}
+			}
+		})
 	}
 
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
 	var fetched []feedItem
-	for range srcs {
-		res := <-results
+	for res := range results {
 		if res.err != nil {
 			fmt.Println(appName, "source failed:", res.err)
 			failed++
