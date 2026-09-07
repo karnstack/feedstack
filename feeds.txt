@@ -1,0 +1,2 @@
+# feedstack feed list: one source per line
+café corner

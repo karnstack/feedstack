@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"time"
 )
@@ -38,24 +40,24 @@ func (e *fetchError) Error() string {
 	return fmt.Sprintf("item %d: connection dropped", e.itemID)
 }
 
-func newFetcher() func() (feedItem, error) {
+func newFetcher(source string) func() (feedItem, error) {
 	n := 0
 	return func() (feedItem, error) {
 		n++
 		if n > feedSize {
-			return feedItem{}, fmt.Errorf("café corner: %w", errFeedExhausted)
+			return feedItem{}, fmt.Errorf("%s: %w", source, errFeedExhausted)
 		}
 		if n%7 == 0 {
-			return feedItem{}, fmt.Errorf("café corner: %w", &fetchError{source: "café corner", itemID: n})
+			return feedItem{}, fmt.Errorf("%s: %w", source, &fetchError{source: source, itemID: n})
 		}
 		id := n
 		if n%5 == 0 {
 			id = n - 1 // the feed re-serves the previous item
 		}
 		return feedItem{
-			title:  fmt.Sprintf("\t item %d from café corner \n", id),
+			title:  fmt.Sprintf("\t item %d from %s \n", id, source),
 			link:   fmt.Sprintf("https://cafecorner.example/items/%d", id),
-			source: "café corner",
+			source: source,
 		}, nil
 	}
 }
@@ -64,8 +66,57 @@ func cleanTitle(raw string) string {
 	return strings.TrimSpace(raw)
 }
 
+const starterFeeds = `# feedstack feed list: one source per line
+café corner
+`
+
+func loadFeeds(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		fmt.Println(appName, "first run: writing starter", path)
+		if err := os.WriteFile(path, []byte(starterFeeds), 0o644); err != nil {
+			return nil, fmt.Errorf("write starter feed list: %w", err)
+		}
+		data = []byte(starterFeeds)
+	} else if err != nil {
+		return nil, fmt.Errorf("load feed list: %w", err)
+	}
+
+	var sources []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		sources = append(sources, line)
+	}
+	return sources, nil
+}
+
+func saveItems(path string, items []feedItem) error {
+	var b strings.Builder
+	for _, item := range items {
+		b.WriteString(fmt.Sprintf("%s -> %s\n", item.title, item.link))
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return fmt.Errorf("save items: %w", err)
+	}
+	return nil
+}
+
 func main() {
 	defer fmt.Println(appName, "shutting down")
+
+	sources, err := loadFeeds("feeds.txt")
+	if err != nil {
+		fmt.Println(appName, "cannot start:", err)
+		return
+	}
+	if len(sources) == 0 {
+		fmt.Println(appName, "cannot start: feed list is empty")
+		return
+	}
+	fmt.Println(appName, "sources:", sources)
 
 	status := statusFetching
 	items := make([]feedItem, 0, maxItems)
@@ -73,7 +124,7 @@ func main() {
 	var dropped []int
 	var lastErr error
 
-	fetchNext := newFetcher()
+	fetchNext := newFetcher(sources[0])
 	for len(items) < maxItems {
 		item, err := fetchNext()
 		if err != nil {
@@ -104,6 +155,11 @@ func main() {
 		fmt.Println("latest:")
 		for _, item := range items[len(items)-3:] {
 			fmt.Printf("  %q -> %s\n", item.title, item.link)
+		}
+		if err := saveItems("items.txt", items); err != nil {
+			fmt.Println(appName, "could not save items:", err)
+		} else {
+			fmt.Println("saved", len(items), "items to items.txt")
 		}
 	case statusFailed:
 		if errors.Is(lastErr, errFeedExhausted) {
