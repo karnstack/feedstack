@@ -1,2 +1,2 @@
-# feedstack feed list: one source per line
-café corner
+# feedstack feed list: one url per line
+https://www.jsonfeed.org/feed.json

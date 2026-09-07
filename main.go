@@ -3,10 +3,12 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -15,7 +17,6 @@ import (
 const (
 	appName  = "feedstack"
 	maxItems = 50
-	feedSize = 80
 )
 
 const (
@@ -32,45 +33,51 @@ type feedItem struct {
 	published time.Time
 }
 
-var errFeedExhausted = errors.New("feed exhausted")
-
-type fetchError struct {
-	source string
-	itemID int
+type wireFeed struct {
+	Title string     `json:"title"`
+	Items []wireItem `json:"items"`
 }
 
-func (e *fetchError) Error() string {
-	return fmt.Sprintf("item %d: connection dropped", e.itemID)
+type wireItem struct {
+	Title     string    `json:"title"`
+	URL       string    `json:"url"`
+	Published time.Time `json:"date_published"`
 }
 
-func newFetcher(source string) func() (feedItem, error) {
-	n := 0
-	return func() (feedItem, error) {
-		n++
-		if n > feedSize {
-			return feedItem{}, fmt.Errorf("%s: %w", source, errFeedExhausted)
-		}
-		if n%7 == 0 {
-			return feedItem{}, fmt.Errorf("%s: %w", source, &fetchError{source: source, itemID: n})
-		}
-		id := n
-		if n%5 == 0 {
-			id = n - 1 // the feed re-serves the previous item
-		}
-		return feedItem{
-			title:  fmt.Sprintf("\t item %d from %s \n", id, source),
-			link:   fmt.Sprintf("https://cafecorner.example/items/%d", id),
-			source: source,
-		}, nil
+func fetchFeed(url string) ([]feedItem, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", url, err)
 	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch %s: unexpected status %s", url, resp.Status)
+	}
+
+	var feed wireFeed
+	if err := json.NewDecoder(resp.Body).Decode(&feed); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", url, err)
+	}
+
+	items := make([]feedItem, 0, len(feed.Items))
+	for _, wi := range feed.Items {
+		items = append(items, feedItem{
+			title:     cleanTitle(wi.Title),
+			link:      wi.URL,
+			source:    feed.Title,
+			published: wi.Published,
+		})
+	}
+	return items, nil
 }
 
 func cleanTitle(raw string) string {
 	return strings.TrimSpace(raw)
 }
 
-const starterFeeds = `# feedstack feed list: one source per line
-café corner
+const starterFeeds = `# feedstack feed list: one url per line
+https://www.jsonfeed.org/feed.json
 `
 
 func parseFeeds(r io.Reader) ([]string, error) {
@@ -142,50 +149,46 @@ func main() {
 	status := statusFetching
 	items := make([]feedItem, 0, maxItems)
 	seen := make(map[string]bool)
-	var dropped []int
-	var lastErr error
+	var failed int
 
-	fetchNext := newFetcher(sources[0])
-	for len(items) < maxItems {
-		item, err := fetchNext()
+	for _, url := range sources {
+		fetched, err := fetchFeed(url)
 		if err != nil {
-			var fe *fetchError
-			if errors.As(err, &fe) {
-				dropped = append(dropped, fe.itemID)
-				continue
-			}
-			lastErr = err
-			status = statusFailed
-			break
-		}
-		if seen[item.link] {
+			fmt.Println(appName, "skipping source:", err)
+			failed++
 			continue
 		}
-		seen[item.link] = true
-		item.title = cleanTitle(item.title)
-		items = append(items, item)
+		for _, item := range fetched {
+			if seen[item.link] {
+				continue
+			}
+			seen[item.link] = true
+			items = append(items, item)
+		}
 	}
-	if status != statusFailed {
+
+	if failed == len(sources) {
+		status = statusFailed
+	} else {
 		status = statusDone
 	}
 
 	switch status {
 	case statusDone:
-		fmt.Printf("%s done: %d items fetched, %d fetches dropped\n", appName, len(items), len(dropped))
-		fmt.Println("dropped item ids:", dropped)
+		fmt.Printf("%s done: %d items from %d of %d sources\n", appName, len(items), len(sources)-failed, len(sources))
+		start := len(items) - 3
+		if start < 0 {
+			start = 0
+		}
 		fmt.Println("latest:")
-		_ = writeItems(os.Stdout, items[len(items)-3:])
+		_ = writeItems(os.Stdout, items[start:])
 		if err := saveItems("items.txt", items); err != nil {
 			fmt.Println(appName, "could not save items:", err)
 		} else {
 			fmt.Println("saved", len(items), "items to items.txt")
 		}
 	case statusFailed:
-		if errors.Is(lastErr, errFeedExhausted) {
-			fmt.Printf("%s: feed ran dry after %d items\n", appName, len(items))
-		} else {
-			fmt.Printf("%s failed after %d items: %v\n", appName, len(items), lastErr)
-		}
+		fmt.Printf("%s failed: all %d sources failed\n", appName, len(sources))
 	default:
 		fmt.Println(appName, "stopped in an unexpected state")
 	}
