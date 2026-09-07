@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+	"unicode/utf8"
+)
 
 const (
 	appName  = "feedstack"
@@ -21,8 +25,12 @@ func newFetcher() func() (string, bool) {
 		if seen%5 == 0 {
 			return "", false // simulated duplicate: skip it
 		}
-		return fmt.Sprintf("item %d", seen), true
+		return fmt.Sprintf("\t item %d from café corner \n", seen), true
 	}
+}
+
+func cleanTitle(raw string) string {
+	return strings.TrimSpace(raw)
 }
 
 func recordKeep(fetched *int, last *string, title string) {
@@ -43,15 +51,16 @@ func main() {
 		if !ok {
 			continue
 		}
-		recordKeep(&itemsFetched, &lastTitle, title)
+		recordKeep(&itemsFetched, &lastTitle, cleanTitle(title))
 	}
 	status = statusDone
 
 	switch status {
 	case statusDone:
-		fmt.Println(appName, "done:", itemsFetched, "items fetched, last was", lastTitle)
+		fmt.Printf("%s done: %d items fetched, last title %q\n", appName, itemsFetched, lastTitle)
+		fmt.Printf("that title is %d bytes, %d runes\n", len(lastTitle), utf8.RuneCountInString(lastTitle))
 	case statusFailed:
-		fmt.Println(appName, "failed after", itemsFetched, "items")
+		fmt.Printf("%s failed after %d items\n", appName, itemsFetched)
 	default:
 		fmt.Println(appName, "stopped in an unexpected state")
 	}
