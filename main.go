@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -70,35 +73,53 @@ const starterFeeds = `# feedstack feed list: one source per line
 café corner
 `
 
-func loadFeeds(path string) ([]string, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		fmt.Println(appName, "first run: writing starter", path)
-		if err := os.WriteFile(path, []byte(starterFeeds), 0o644); err != nil {
-			return nil, fmt.Errorf("write starter feed list: %w", err)
-		}
-		data = []byte(starterFeeds)
-	} else if err != nil {
-		return nil, fmt.Errorf("load feed list: %w", err)
-	}
-
+func parseFeeds(r io.Reader) ([]string, error) {
 	var sources []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		sources = append(sources, line)
 	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("parse feed list: %w", err)
+	}
 	return sources, nil
 }
 
-func saveItems(path string, items []feedItem) error {
-	var b strings.Builder
-	for _, item := range items {
-		b.WriteString(fmt.Sprintf("%s -> %s\n", item.title, item.link))
+func loadFeeds(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		fmt.Println(appName, "first run: writing starter", path)
+		if err := os.WriteFile(path, []byte(starterFeeds), 0o644); err != nil {
+			return nil, fmt.Errorf("write starter feed list: %w", err)
+		}
+		return parseFeeds(strings.NewReader(starterFeeds))
 	}
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+	if err != nil {
+		return nil, fmt.Errorf("load feed list: %w", err)
+	}
+	defer f.Close()
+	return parseFeeds(f)
+}
+
+func writeItems(w io.Writer, items []feedItem) error {
+	for _, item := range items {
+		if _, err := fmt.Fprintf(w, "%s -> %s\n", item.title, item.link); err != nil {
+			return fmt.Errorf("write item: %w", err)
+		}
+	}
+	return nil
+}
+
+func saveItems(path string, items []feedItem) error {
+	var buf bytes.Buffer
+	if err := writeItems(&buf, items); err != nil {
+		return fmt.Errorf("save items: %w", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("save items: %w", err)
 	}
 	return nil
@@ -153,9 +174,7 @@ func main() {
 		fmt.Printf("%s done: %d items fetched, %d fetches dropped\n", appName, len(items), len(dropped))
 		fmt.Println("dropped item ids:", dropped)
 		fmt.Println("latest:")
-		for _, item := range items[len(items)-3:] {
-			fmt.Printf("  %q -> %s\n", item.title, item.link)
-		}
+		_ = writeItems(os.Stdout, items[len(items)-3:])
 		if err := saveItems("items.txt", items); err != nil {
 			fmt.Println(appName, "could not save items:", err)
 		} else {
