@@ -3,17 +3,40 @@ package main
 import "fmt"
 
 const (
-	appName        = "feedstack"
-	defaultFeedURL = "https://go.dev/blog/feed.atom"
-	maxItems       = 50
+	appName  = "feedstack"
+	maxItems = 50
+)
+
+const (
+	statusIdle = iota
+	statusFetching
+	statusDone
+	statusFailed
 )
 
 func main() {
-	var itemsFetched int
-	var lastError string
+	status := statusFetching
+	var itemsSeen, itemsFetched int
 
-	fmt.Println(appName, "starting")
-	fmt.Println("feed:", defaultFeedURL)
-	fmt.Println("items fetched:", itemsFetched)
-	fmt.Println("last error:", lastError)
+	for {
+		if itemsFetched == maxItems {
+			status = statusDone
+			break
+		}
+
+		itemsSeen++
+		if itemsSeen%5 == 0 {
+			continue // simulated duplicate: skip it, fetch nothing
+		}
+		itemsFetched++
+	}
+
+	switch status {
+	case statusDone:
+		fmt.Println(appName, "done:", itemsFetched, "items fetched,", itemsSeen, "seen")
+	case statusFailed:
+		fmt.Println(appName, "failed after", itemsFetched, "items")
+	default:
+		fmt.Println(appName, "stopped in an unexpected state")
+	}
 }
