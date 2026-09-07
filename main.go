@@ -19,12 +19,7 @@ import (
 	"time"
 )
 
-const (
-	appName      = "feedstack"
-	maxItems     = 50
-	maxWorkers   = 4
-	fetchTimeout = 5 * time.Second
-)
+const appName = "feedstack"
 
 type status int
 
@@ -62,13 +57,6 @@ func (it *feedItem) clean() {
 
 func (it *feedItem) line() string {
 	return fmt.Sprintf("%s -> %s", it.title, it.link)
-}
-
-func lastN[T any](s []T, n int) []T {
-	if n > len(s) {
-		n = len(s)
-	}
-	return s[len(s)-n:]
 }
 
 type wireFeed struct {
@@ -304,33 +292,12 @@ func (s *seenSet) add(link string) bool {
 	return true
 }
 
-func main() {
-	defer fmt.Println(appName, "shutting down")
+const (
+	maxWorkers   = 4
+	fetchTimeout = 5 * time.Second
+)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	lines, err := loadFeeds("feeds.txt")
-	if err != nil {
-		fmt.Println(appName, "cannot start:", err)
-		return
-	}
-	if len(lines) == 0 {
-		fmt.Println(appName, "cannot start: feed list is empty")
-		return
-	}
-	fmt.Println(appName, "sources:", lines)
-
-	status := statusFetching
-	var failed int
-
-	srcs := make([]source, 0, len(lines))
-	for _, line := range lines {
-		srcs = append(srcs, loggingSource{source: newSource(line)})
-	}
-
-	seen := newSeenSet()
-
+func aggregate(ctx context.Context, srcs []source, seen *seenSet) ([]feedItem, []error) {
 	jobs := make(chan source, len(srcs))
 	for _, src := range srcs {
 		jobs <- src
@@ -364,43 +331,80 @@ func main() {
 		close(results)
 	}()
 
-	var fetched []feedItem
+	var items []feedItem
+	var errs []error
 	for res := range results {
 		if res.err != nil {
-			fmt.Println(appName, "source failed:", res.err)
-			failed++
+			errs = append(errs, res.err)
 			continue
 		}
-		fetched = append(fetched, res.items...)
+		items = append(items, res.items...)
 	}
 
-	items := fetched
+	slices.SortFunc(items, func(a, b feedItem) int {
+		return b.published.Compare(a.published)
+	})
+	return items, errs
+}
 
-	if failed == len(srcs) {
+func report(items []feedItem, errs []error, total int) {
+	for _, err := range errs {
+		fmt.Println(appName, "source failed:", err)
+	}
+
+	status := statusDone
+	if len(errs) == total {
 		status = statusFailed
-	} else {
-		status = statusDone
 	}
 
 	switch status {
 	case statusDone:
 		fmt.Printf("%s %v: %d items from %d of %d sources\n",
-			appName, status, len(items), len(srcs)-failed, len(srcs))
+			appName, status, len(items), total-len(errs), total)
 		counts := countBy(items, func(it feedItem) string { return it.source })
 		fmt.Println("by source:")
 		for _, src := range slices.Sorted(maps.Keys(counts)) {
 			fmt.Printf("  %s: %d\n", src, counts[src])
 		}
 		fmt.Println("latest:")
-		_ = writeItems(os.Stdout, lastN(items, 3))
-		if err := saveItems("items.txt", items); err != nil {
-			fmt.Println(appName, "could not save items:", err)
-		} else {
-			fmt.Println("saved", len(items), "items to items.txt")
-		}
+		_ = writeItems(os.Stdout, items[:min(3, len(items))])
 	case statusFailed:
-		fmt.Printf("%s %v: all %d sources failed\n", appName, status, len(srcs))
+		fmt.Printf("%s %v: all %d sources failed\n", appName, status, total)
 	default:
 		fmt.Println(appName, "stopped in an unexpected state")
+	}
+}
+
+func main() {
+	defer fmt.Println(appName, "shutting down")
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	lines, err := loadFeeds("feeds.txt")
+	if err != nil {
+		fmt.Println(appName, "cannot start:", err)
+		return
+	}
+	if len(lines) == 0 {
+		fmt.Println(appName, "cannot start: feed list is empty")
+		return
+	}
+	fmt.Println(appName, "sources:", lines)
+
+	srcs := make([]source, 0, len(lines))
+	for _, line := range lines {
+		srcs = append(srcs, loggingSource{source: newSource(line)})
+	}
+
+	seen := newSeenSet()
+	items, errs := aggregate(ctx, srcs, seen)
+
+	report(items, errs, len(srcs))
+
+	if err := saveItems("items.txt", items); err != nil {
+		fmt.Println(appName, "could not save items:", err)
+	} else {
+		fmt.Println("saved", len(items), "items to items.txt")
 	}
 }
