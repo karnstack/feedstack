@@ -194,6 +194,21 @@ type source interface {
 	fetch() ([]feedItem, error)
 }
 
+type loggingSource struct {
+	source
+}
+
+func (l loggingSource) fetch() ([]feedItem, error) {
+	start := time.Now()
+	items, err := l.source.fetch()
+	if err != nil {
+		fmt.Printf("%T: failed after %v: %v\n", l.source, time.Since(start), err)
+		return nil, err
+	}
+	fmt.Printf("%T: %d items in %v\n", l.source, len(items), time.Since(start))
+	return items, nil
+}
+
 func newSource(line string) source {
 	if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
 		return httpSource{url: line}
@@ -222,7 +237,7 @@ func main() {
 
 	srcs := make([]source, 0, len(lines))
 	for _, line := range lines {
-		srcs = append(srcs, newSource(line))
+		srcs = append(srcs, loggingSource{source: newSource(line)})
 	}
 
 	for _, src := range srcs {
