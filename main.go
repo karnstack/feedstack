@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"os/signal"
 	"slices"
 	"strings"
 	"sync"
@@ -18,9 +20,10 @@ import (
 )
 
 const (
-	appName    = "feedstack"
-	maxItems   = 50
-	maxWorkers = 4
+	appName      = "feedstack"
+	maxItems     = 50
+	maxWorkers   = 4
+	fetchTimeout = 5 * time.Second
 )
 
 type status int
@@ -155,7 +158,10 @@ type fileSource struct {
 	path string
 }
 
-func (s fileSource) fetch() ([]feedItem, error) {
+func (s fileSource) fetch(ctx context.Context) ([]feedItem, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(s.path)
 	if err != nil {
 		return nil, fmt.Errorf("open feed file: %w", err)
@@ -172,10 +178,14 @@ type httpSource struct {
 	url string
 }
 
-func (s httpSource) fetch() ([]feedItem, error) {
-	resp, err := http.Get(s.url)
+func (s httpSource) fetch(ctx context.Context) ([]feedItem, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", s.url, err)
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -245,16 +255,16 @@ func saveItems(path string, items []feedItem) error {
 }
 
 type source interface {
-	fetch() ([]feedItem, error)
+	fetch(ctx context.Context) ([]feedItem, error)
 }
 
 type loggingSource struct {
 	source
 }
 
-func (l loggingSource) fetch() ([]feedItem, error) {
+func (l loggingSource) fetch(ctx context.Context) ([]feedItem, error) {
 	start := time.Now()
-	items, err := l.source.fetch()
+	items, err := l.source.fetch(ctx)
 	if err != nil {
 		fmt.Printf("%T: failed after %v: %v\n", l.source, time.Since(start), err)
 		return nil, err
@@ -277,6 +287,9 @@ type fetchResult struct {
 
 func main() {
 	defer fmt.Println(appName, "shutting down")
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
 	lines, err := loadFeeds("feeds.txt")
 	if err != nil {
@@ -310,7 +323,9 @@ func main() {
 	for range workers {
 		wg.Go(func() {
 			for src := range jobs {
-				batch, err := src.fetch()
+				fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
+				batch, err := src.fetch(fetchCtx)
+				cancel()
 				results <- fetchResult{items: batch, err: err}
 			}
 		})
