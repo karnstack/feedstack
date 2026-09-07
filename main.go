@@ -25,6 +25,11 @@ func newFetcher() func() (string, bool) {
 	}
 }
 
+func recordKeep(fetched *int, last *string, title string) {
+	*fetched++
+	*last = title
+}
+
 func main() {
 	defer fmt.Println(appName, "shutting down")
 
@@ -38,8 +43,7 @@ func main() {
 		if !ok {
 			continue
 		}
-		itemsFetched++
-		lastTitle = title
+		recordKeep(&itemsFetched, &lastTitle, title)
 	}
 	status = statusDone
 
