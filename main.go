@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const appName = "feedstack"
@@ -53,6 +54,13 @@ type feedItem struct {
 
 func (it *feedItem) clean() {
 	it.title = strings.TrimSpace(it.title)
+	if len(it.title) > maxTitleLen {
+		cut := maxTitleLen
+		for cut > 0 && !utf8.RuneStart(it.title[cut]) {
+			cut--
+		}
+		it.title = strings.TrimSpace(it.title[:cut])
+	}
 }
 
 func (it *feedItem) line() string {
@@ -300,6 +308,7 @@ func (s *seenSet) add(link string) bool {
 const (
 	maxWorkers   = 4
 	fetchTimeout = 5 * time.Second
+	maxTitleLen  = 80 // bytes; longer titles get cut
 )
 
 func safeFetch(ctx context.Context, src source) (items []feedItem, err error) {

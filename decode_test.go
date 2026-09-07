@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 	"testing"
@@ -71,4 +72,16 @@ func TestDecodeLegacy(t *testing.T) {
 			}
 		})
 	}
+}
+
+func FuzzDecodeItems(f *testing.F) {
+	f.Add([]byte(`{"version":"https://jsonfeed.org/version/1.1","title":"seed feed","items":[{"title":"a","url":"https://feeds.example/a"}]}`))
+	f.Add([]byte(`{"exporter":"brewdump 0.4","channel":{"title":"seed","items":[{"headline":"a","url":"https://feeds.example/b","tags":["go"]}]}}`))
+	f.Add([]byte(`not json at all`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// The property is survival: no input may panic the parser.
+		// An error return is a correct answer; rejecting garbage is the job.
+		_, _ = decodeItems(bytes.NewReader(data))
+	})
 }
