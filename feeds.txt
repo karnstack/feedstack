@@ -1,3 +1,4 @@
 # feedstack feed list: one url per line
 https://www.jsonfeed.org/feed.json
 local.json
+legacy.json

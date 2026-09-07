@@ -1,0 +1,10 @@
+{
+	"exporter": "brewdump 0.3",
+	"channel": {
+		"title": "morning brew",
+		"items": [
+			{ "id": 101, "headline": "any lands in feedstack", "url": "https://morningbrew.example/101" },
+			{ "id": 102, "headline": "the schema nobody wrote down", "url": "https://morningbrew.example/102" }
+		]
+	}
+}
