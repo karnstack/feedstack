@@ -285,6 +285,25 @@ type fetchResult struct {
 	err   error
 }
 
+type seenSet struct {
+	mu    sync.Mutex
+	links map[string]struct{}
+}
+
+func newSeenSet() *seenSet {
+	return &seenSet{links: make(map[string]struct{})}
+}
+
+func (s *seenSet) add(link string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.links[link]; ok {
+		return false
+	}
+	s.links[link] = struct{}{}
+	return true
+}
+
 func main() {
 	defer fmt.Println(appName, "shutting down")
 
@@ -310,6 +329,8 @@ func main() {
 		srcs = append(srcs, loggingSource{source: newSource(line)})
 	}
 
+	seen := newSeenSet()
+
 	jobs := make(chan source, len(srcs))
 	for _, src := range srcs {
 		jobs <- src
@@ -326,7 +347,14 @@ func main() {
 				fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
 				batch, err := src.fetch(fetchCtx)
 				cancel()
-				results <- fetchResult{items: batch, err: err}
+
+				var fresh []feedItem
+				for _, item := range batch {
+					if seen.add(item.link) {
+						fresh = append(fresh, item)
+					}
+				}
+				results <- fetchResult{items: fresh, err: err}
 			}
 		})
 	}
@@ -346,9 +374,7 @@ func main() {
 		fetched = append(fetched, res.items...)
 	}
 
-	items := slices.Collect(dedupedBy(fetched, func(it feedItem) string {
-		return it.link
-	}))
+	items := fetched
 
 	if failed == len(srcs) {
 		status = statusFailed

@@ -2,4 +2,3 @@
 https://www.jsonfeed.org/feed.json
 local.json
 legacy.json
-https://httpbin.org/delay/10
