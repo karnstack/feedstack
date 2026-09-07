@@ -1,0 +1,4 @@
+# binaries go build drops in the module root
+/feedstack
+/feedserver
+*.test
