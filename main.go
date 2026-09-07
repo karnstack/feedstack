@@ -41,7 +41,7 @@ func (s status) String() string {
 	case statusFailed:
 		return "failed"
 	}
-	return "unknown"
+	panic(fmt.Sprintf("unknown status: %d", int(s)))
 }
 
 type feedItem struct {
@@ -134,6 +134,11 @@ func decodeLegacy(doc map[string]any) ([]feedItem, error) {
 		link, ok := entry["url"].(string)
 		if !ok {
 			continue
+		}
+		if tags, ok := entry["tags"].([]any); ok && len(tags) > 0 {
+			if label, ok := tags[0].(string); ok {
+				title = "[" + label + "] " + title
+			}
 		}
 		item := feedItem{title: title, link: link, source: source}
 		item.clean()
@@ -297,6 +302,15 @@ const (
 	fetchTimeout = 5 * time.Second
 )
 
+func safeFetch(ctx context.Context, src source) (items []feedItem, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("fetch panicked: %v", r)
+		}
+	}()
+	return src.fetch(ctx)
+}
+
 func aggregate(ctx context.Context, srcs []source, seen *seenSet) ([]feedItem, []error) {
 	jobs := make(chan source, len(srcs))
 	for _, src := range srcs {
@@ -312,7 +326,7 @@ func aggregate(ctx context.Context, srcs []source, seen *seenSet) ([]feedItem, [
 		wg.Go(func() {
 			for src := range jobs {
 				fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
-				batch, err := src.fetch(fetchCtx)
+				batch, err := safeFetch(fetchCtx, src)
 				cancel()
 
 				var fresh []feedItem
