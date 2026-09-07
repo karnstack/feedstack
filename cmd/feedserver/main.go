@@ -65,10 +65,7 @@ func main() {
 		}
 	}()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", st.handleHealthz)
-	mux.HandleFunc("GET /items", st.handleItems)
-	mux.HandleFunc("GET /feeds/{source}", st.handleFeed)
+	mux := newMux(st)
 
 	srv := &http.Server{
 		Addr:              addr,

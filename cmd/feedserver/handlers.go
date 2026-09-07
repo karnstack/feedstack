@@ -9,6 +9,14 @@ import (
 	"feedstack/feed"
 )
 
+func newMux(st *store) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", st.handleHealthz)
+	mux.HandleFunc("GET /items", st.handleItems)
+	mux.HandleFunc("GET /feeds/{source}", st.handleFeed)
+	return mux
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
