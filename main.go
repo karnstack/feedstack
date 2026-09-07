@@ -19,18 +19,52 @@ const (
 	maxItems = 50
 )
 
+type status int
+
 const (
-	statusIdle = iota
+	statusIdle status = iota
 	statusFetching
 	statusDone
 	statusFailed
 )
+
+func (s status) String() string {
+	switch s {
+	case statusIdle:
+		return "idle"
+	case statusFetching:
+		return "fetching"
+	case statusDone:
+		return "done"
+	case statusFailed:
+		return "failed"
+	}
+	return "unknown"
+}
 
 type feedItem struct {
 	title     string
 	link      string
 	source    string
 	published time.Time
+}
+
+func (it *feedItem) clean() {
+	it.title = strings.TrimSpace(it.title)
+}
+
+func (it *feedItem) line() string {
+	return fmt.Sprintf("%s -> %s", it.title, it.link)
+}
+
+type itemList []feedItem
+
+func (ls itemList) latest(n int) itemList {
+	start := len(ls) - n
+	if start < 0 {
+		start = 0
+	}
+	return ls[start:]
 }
 
 type wireFeed struct {
@@ -62,18 +96,16 @@ func fetchFeed(url string) ([]feedItem, error) {
 
 	items := make([]feedItem, 0, len(feed.Items))
 	for _, wi := range feed.Items {
-		items = append(items, feedItem{
-			title:     cleanTitle(wi.Title),
+		item := feedItem{
+			title:     wi.Title,
 			link:      wi.URL,
 			source:    feed.Title,
 			published: wi.Published,
-		})
+		}
+		item.clean()
+		items = append(items, item)
 	}
 	return items, nil
-}
-
-func cleanTitle(raw string) string {
-	return strings.TrimSpace(raw)
 }
 
 const starterFeeds = `# feedstack feed list: one url per line
@@ -114,7 +146,7 @@ func loadFeeds(path string) ([]string, error) {
 
 func writeItems(w io.Writer, items []feedItem) error {
 	for _, item := range items {
-		if _, err := fmt.Fprintf(w, "%s -> %s\n", item.title, item.link); err != nil {
+		if _, err := fmt.Fprintln(w, item.line()); err != nil {
 			return fmt.Errorf("write item: %w", err)
 		}
 	}
@@ -147,7 +179,7 @@ func main() {
 	fmt.Println(appName, "sources:", sources)
 
 	status := statusFetching
-	items := make([]feedItem, 0, maxItems)
+	items := make(itemList, 0, maxItems)
 	seen := make(map[string]bool)
 	var failed int
 
@@ -175,20 +207,17 @@ func main() {
 
 	switch status {
 	case statusDone:
-		fmt.Printf("%s done: %d items from %d of %d sources\n", appName, len(items), len(sources)-failed, len(sources))
-		start := len(items) - 3
-		if start < 0 {
-			start = 0
-		}
+		fmt.Printf("%s %v: %d items from %d of %d sources\n",
+			appName, status, len(items), len(sources)-failed, len(sources))
 		fmt.Println("latest:")
-		_ = writeItems(os.Stdout, items[start:])
+		_ = writeItems(os.Stdout, items.latest(3))
 		if err := saveItems("items.txt", items); err != nil {
 			fmt.Println(appName, "could not save items:", err)
 		} else {
 			fmt.Println("saved", len(items), "items to items.txt")
 		}
 	case statusFailed:
-		fmt.Printf("%s failed: all %d sources failed\n", appName, len(sources))
+		fmt.Printf("%s %v: all %d sources failed\n", appName, status, len(sources))
 	default:
 		fmt.Println(appName, "stopped in an unexpected state")
 	}
