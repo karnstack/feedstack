@@ -1,0 +1,16 @@
+{
+	"version": "https://jsonfeed.org/version/1.1",
+	"title": "feedstack dev notes",
+	"items": [
+		{
+			"title": "interfaces land in feedstack",
+			"url": "https://feedstack.example/interfaces",
+			"date_published": "2026-06-11T09:00:00Z"
+		},
+		{
+			"title": "two sources, one contract",
+			"url": "https://feedstack.example/contract",
+			"date_published": "2026-06-10T09:00:00Z"
+		}
+	]
+}

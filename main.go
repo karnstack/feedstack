@@ -78,22 +78,11 @@ type wireItem struct {
 	Published time.Time `json:"date_published"`
 }
 
-func fetchFeed(url string) ([]feedItem, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch %s: unexpected status %s", url, resp.Status)
-	}
-
+func decodeItems(r io.Reader) ([]feedItem, error) {
 	var feed wireFeed
-	if err := json.NewDecoder(resp.Body).Decode(&feed); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", url, err)
+	if err := json.NewDecoder(r).Decode(&feed); err != nil {
+		return nil, fmt.Errorf("decode feed: %w", err)
 	}
-
 	items := make([]feedItem, 0, len(feed.Items))
 	for _, wi := range feed.Items {
 		item := feedItem{
@@ -104,6 +93,43 @@ func fetchFeed(url string) ([]feedItem, error) {
 		}
 		item.clean()
 		items = append(items, item)
+	}
+	return items, nil
+}
+
+type fileSource struct {
+	path string
+}
+
+func (s fileSource) fetch() ([]feedItem, error) {
+	f, err := os.Open(s.path)
+	if err != nil {
+		return nil, fmt.Errorf("open feed file: %w", err)
+	}
+	defer f.Close()
+	items, err := decodeItems(f)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", s.path, err)
+	}
+	return items, nil
+}
+
+type httpSource struct {
+	url string
+}
+
+func (s httpSource) fetch() ([]feedItem, error) {
+	resp, err := http.Get(s.url)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", s.url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch %s: unexpected status %s", s.url, resp.Status)
+	}
+	items, err := decodeItems(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", s.url, err)
 	}
 	return items, nil
 }
@@ -164,29 +190,45 @@ func saveItems(path string, items []feedItem) error {
 	return nil
 }
 
+type source interface {
+	fetch() ([]feedItem, error)
+}
+
+func newSource(line string) source {
+	if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
+		return httpSource{url: line}
+	}
+	return fileSource{path: line}
+}
+
 func main() {
 	defer fmt.Println(appName, "shutting down")
 
-	sources, err := loadFeeds("feeds.txt")
+	lines, err := loadFeeds("feeds.txt")
 	if err != nil {
 		fmt.Println(appName, "cannot start:", err)
 		return
 	}
-	if len(sources) == 0 {
+	if len(lines) == 0 {
 		fmt.Println(appName, "cannot start: feed list is empty")
 		return
 	}
-	fmt.Println(appName, "sources:", sources)
+	fmt.Println(appName, "sources:", lines)
 
 	status := statusFetching
 	items := make(itemList, 0, maxItems)
 	seen := make(map[string]bool)
 	var failed int
 
-	for _, url := range sources {
-		fetched, err := fetchFeed(url)
+	srcs := make([]source, 0, len(lines))
+	for _, line := range lines {
+		srcs = append(srcs, newSource(line))
+	}
+
+	for _, src := range srcs {
+		fetched, err := src.fetch()
 		if err != nil {
-			fmt.Println(appName, "skipping source:", err)
+			fmt.Println(appName, "source failed:", err)
 			failed++
 			continue
 		}
@@ -199,7 +241,7 @@ func main() {
 		}
 	}
 
-	if failed == len(sources) {
+	if failed == len(srcs) {
 		status = statusFailed
 	} else {
 		status = statusDone
@@ -208,7 +250,7 @@ func main() {
 	switch status {
 	case statusDone:
 		fmt.Printf("%s %v: %d items from %d of %d sources\n",
-			appName, status, len(items), len(sources)-failed, len(sources))
+			appName, status, len(items), len(srcs)-failed, len(srcs))
 		fmt.Println("latest:")
 		_ = writeItems(os.Stdout, items.latest(3))
 		if err := saveItems("items.txt", items); err != nil {
@@ -217,7 +259,7 @@ func main() {
 			fmt.Println("saved", len(items), "items to items.txt")
 		}
 	case statusFailed:
-		fmt.Printf("%s %v: all %d sources failed\n", appName, status, len(sources))
+		fmt.Printf("%s %v: all %d sources failed\n", appName, status, len(srcs))
 	default:
 		fmt.Println(appName, "stopped in an unexpected state")
 	}
