@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -57,14 +59,11 @@ func (it *feedItem) line() string {
 	return fmt.Sprintf("%s -> %s", it.title, it.link)
 }
 
-type itemList []feedItem
-
-func (ls itemList) latest(n int) itemList {
-	start := len(ls) - n
-	if start < 0 {
-		start = 0
+func lastN[T any](s []T, n int) []T {
+	if n > len(s) {
+		n = len(s)
 	}
-	return ls[start:]
+	return s[len(s)-n:]
 }
 
 type wireFeed struct {
@@ -284,8 +283,6 @@ func main() {
 	fmt.Println(appName, "sources:", lines)
 
 	status := statusFetching
-	items := make(itemList, 0, maxItems)
-	seen := make(map[string]bool)
 	var failed int
 
 	srcs := make([]source, 0, len(lines))
@@ -293,21 +290,20 @@ func main() {
 		srcs = append(srcs, loggingSource{source: newSource(line)})
 	}
 
+	var fetched []feedItem
 	for _, src := range srcs {
-		fetched, err := src.fetch()
+		batch, err := src.fetch()
 		if err != nil {
 			fmt.Println(appName, "source failed:", err)
 			failed++
 			continue
 		}
-		for _, item := range fetched {
-			if seen[item.link] {
-				continue
-			}
-			seen[item.link] = true
-			items = append(items, item)
-		}
+		fetched = append(fetched, batch...)
 	}
+
+	items := slices.Collect(dedupedBy(fetched, func(it feedItem) string {
+		return it.link
+	}))
 
 	if failed == len(srcs) {
 		status = statusFailed
@@ -319,8 +315,13 @@ func main() {
 	case statusDone:
 		fmt.Printf("%s %v: %d items from %d of %d sources\n",
 			appName, status, len(items), len(srcs)-failed, len(srcs))
+		counts := countBy(items, func(it feedItem) string { return it.source })
+		fmt.Println("by source:")
+		for _, src := range slices.Sorted(maps.Keys(counts)) {
+			fmt.Printf("  %s: %d\n", src, counts[src])
+		}
 		fmt.Println("latest:")
-		_ = writeItems(os.Stdout, items.latest(3))
+		_ = writeItems(os.Stdout, lastN(items, 3))
 		if err := saveItems("items.txt", items); err != nil {
 			fmt.Println(appName, "could not save items:", err)
 		} else {
